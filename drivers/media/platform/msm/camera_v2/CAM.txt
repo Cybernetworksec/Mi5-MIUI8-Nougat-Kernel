@@ -1,0 +1,89 @@
+diff --git a/drivers/media/platform/msm/camera_v2/sensor/msm_sensor_driver.c b/drivers/media/platform/msm/camera_v2/sensor/msm_sensor_driver.c
+index fc99226..16f910d 100644
+--- a/drivers/media/platform/msm/camera_v2/sensor/msm_sensor_driver.c
++++ b/drivers/media/platform/msm/camera_v2/sensor/msm_sensor_driver.c
+@@ -711,6 +711,8 @@ int32_t msm_sensor_driver_probe(void *setting,
+ 		slave_info->power_setting_array.power_down_setting =
+ 			compat_ptr(slave_info32->
+ 				power_setting_array.power_down_setting);
++		slave_info->is_init_params_valid =
++			slave_info32->is_init_params_valid;
+ 		slave_info->sensor_init_params =
+ 			slave_info32->sensor_init_params;
+ 		slave_info->output_format =
+@@ -749,10 +751,12 @@ int32_t msm_sensor_driver_probe(void *setting,
+ 	CDBG("power up size %d power down size %d\n",
+ 		slave_info->power_setting_array.size,
+ 		slave_info->power_setting_array.size_down);
+-	CDBG("position %d",
+-		slave_info->sensor_init_params.position);
+-	CDBG("mount %d",
+-		slave_info->sensor_init_params.sensor_mount_angle);
++	if (slave_info->is_init_params_valid) {
++		CDBG("position %d",
++			slave_info->sensor_init_params.position);
++		CDBG("mount %d",
++			slave_info->sensor_init_params.sensor_mount_angle);
++	}
+ 
+ 	/* Validate camera id */
+ 	if (slave_info->camera_id >= MAX_CAMERAS) {
+diff --git a/drivers/media/platform/msm/camera_v2/sensor/ois/msm_ois.c b/drivers/media/platform/msm/camera_v2/sensor/ois/msm_ois.c
+index f3e1c66..f97e70d 100644
+--- a/drivers/media/platform/msm/camera_v2/sensor/ois/msm_ois.c
++++ b/drivers/media/platform/msm/camera_v2/sensor/ois/msm_ois.c
+@@ -24,7 +24,7 @@
+ #include <linux/syscore_ops.h>
+ 
+ DEFINE_MSM_MUTEX(msm_ois_mutex);
+-/*#define MSM_OIS_DEBUG*/
++#define MSM_OIS_DEBUG
+ #undef CDBG
+ #ifdef MSM_OIS_DEBUG
+ #define CDBG(fmt, args...) pr_err(fmt, ##args)
+@@ -32,6 +32,8 @@ DEFINE_MSM_MUTEX(msm_ois_mutex);
+ #define CDBG(fmt, args...) pr_debug(fmt, ##args)
+ #endif
+ 
++#define MAX_POLL_COUNT 100
++
+ static void msm_ois_fw_dl(struct work_struct *work);
+ static struct v4l2_file_operations msm_ois_v4l2_subdev_fops;
+ static int32_t msm_ois_power_up(struct msm_ois_ctrl_t *o_ctrl);
+@@ -234,16 +236,22 @@ static int32_t msm_ois_write_settings(struct msm_ois_ctrl_t *o_ctrl,
+ 			break;
+ 
+ 		case MSM_OIS_POLL: {
++			int32_t poll_count = 0;
+ 			switch (settings[i].data_type) {
+ 			case MSM_CAMERA_I2C_BYTE_DATA:
+ 			case MSM_CAMERA_I2C_WORD_DATA:
+-
++				do {
+ 				rc = o_ctrl->i2c_client.i2c_func_tbl
+ 					->i2c_poll(&o_ctrl->i2c_client,
+ 					settings[i].reg_addr,
+ 					settings[i].reg_data,
+ 					settings[i].data_type,
+ 					settings[i].delay);
++					if (poll_count++ > MAX_POLL_COUNT) {
++						pr_err("MSM_OIS_POLL failed");
++						break;
++					}
++				} while (rc != 0);
+ 				break;
+ 
+ 			default:
+@@ -254,6 +262,12 @@ static int32_t msm_ois_write_settings(struct msm_ois_ctrl_t *o_ctrl,
+ 		}
+ 		}
+ 
++		if (settings[i].delay > 20)
++			msleep(settings[i].delay);
++		else if (0 != settings[i].delay)
++			usleep_range(settings[i].delay * 1000,
++				(settings[i].delay * 1000) + 1000);
++
+ 		if (rc < 0)
+ 			break;
+ 	}
